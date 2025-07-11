@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ретро-Ралли 80-х: Низкополигональная 3D-сцена</title>
+    <style>
+        /* Основные стили для страницы */
+        body {
+            margin: 0;
+            overflow: hidden; /* Скрываем полосы прокрутки */
+            background-color: #1a1a2e; /* Темно-синий фон космоса/ночи */
+            font-family: 'Space Mono', monospace;
+            color: #00ffcc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column; /* Для размещения кнопок под канвасом */
+        }
+
+        /* Импорт шрифта Google Fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+        /* Стили для холста Three.js */
+        canvas {
+            display: block; /* Убираем лишние отступы */
+            width: 100vw; /* Холст на всю ширину окна */
+            height: calc(100vh - 80px); /* Высота холста минус высота кнопок */
+        }
+
+        /* Контейнер для инструкций */
+        .instructions {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: #00ffcc;
+            font-size: 0.9em;
+            text-align: center;
+            border: 1px solid #00ffcc;
+            box-shadow: 0 0 10px #00ffcc;
+            z-index: 10; /* Поверх канваса */
+        }
+
+        /* Стили для контейнера кнопок */
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 10;
+        }
+
+        /* Стили для кнопок управления */
+        .control-button {
+            background-color: #00b386; /* Зеленовато-бирюзовый */
+            color: #1a1a2e;
+            border: 2px solid #00ffcc;
+            padding: 15px 30px;
+            font-family: 'Space Mono', monospace;
+            font-size: 1.2em;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 0 15px #00ffcc, 0 0 5px #00ffcc inset;
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .control-button:hover {
+            background-color: #00ffcc;
+            box-shadow: 0 0 25px #00ffcc, 0 0 10px #00ffcc inset;
+        }
+
+        .control-button:active {
+            background-color: #00e6b3;
+            box-shadow: 0 0 10px #00ffcc inset;
+        }
+
+        /* Стили для блока спидометра */
+        .speedometer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            border-radius: 8px;
+            color: #00ffcc;
+            font-family: 'Space Mono', monospace;
+            font-size: 1.5em;
+            text-align: right;
+            border: 1px solid #00ffcc;
+            box-shadow: 0 0 10px #00ffcc;
+            z-index: 10;
+        }
+
+        .speed-value {
+            font-weight: bold;
+            color: #ffcc00; /* Желтый для значения скорости */
+        }
+    </style>
+</head>
+<body>
+    <!-- Инструкции для пользователя -->
+    <div class="instructions">
+        Используйте мышь, чтобы вращать камеру. Нажимайте и удерживайте кнопки "Вперёд" и "Назад" для движения.
+    </div>
+
+    <!-- Контейнер для кнопок управления -->
+    <div class="controls">
+        <button id="forwardButton" class="control-button">Вперёд</button>
+        <button id="backwardButton" class="control-button">Назад</button>
+    </div>
+
+    <!-- Блок спидометра -->
+    <div class="speedometer">
+        Скорость: <span id="speedDisplay" class="speed-value">0</span> км/ч
+    </div>
+
+    <!-- Подключаем библиотеку Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, car, road, leftNeon, rightNeon;
+        let isDragging = false;
+        let previousMousePosition = {
+            x: 0,
+            y: 0
+        };
+
+        // Variables for car movement control
+        let carSpeed = 0;
+        const acceleration = 0.05; // Acceleration rate
+        const deceleration = 0.03; // Deceleration rate when no button is pressed
+        const maxSpeed = 1.5; // Maximum forward speed
+        const maxReverseSpeed = -0.5; // Maximum reverse speed
+        const speedConversionFactor = 100; // 1 unit of carSpeed = 100 km/h
+
+        // Flags to check if buttons are pressed
+        let isForwardPressed = false;
+        let isBackwardPressed = false;
+
+        // Scene initialization
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e); // Dark blue space/night background
+
+            // Create camera (perspective camera)
+            // Parameters: field of view, aspect ratio, near clipping plane, far clipping plane
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / (window.innerHeight - 80), 0.1, 1000); // Height considering buttons
+            camera.position.set(0, 5, 15); // Camera position
+            camera.lookAt(new THREE.Vector3(0, 0, 0)); // Camera looks at the center
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true }); // Enable anti-aliasing
+            renderer.setSize(window.innerWidth, window.innerHeight - 80); // Set renderer size
+            document.body.insertBefore(renderer.domElement, document.querySelector('.controls')); // Add canvas before buttons
+
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0x404040); // Soft ambient light
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Directional light
+            directionalLight.position.set(5, 10, 7);
+            scene.add(directionalLight);
+
+            // Create low-poly car
+            createCar();
+
+            // Create low-poly road
+            createRoad();
+
+            // Create neon lines on the sides of the road
+            createNeonLines();
+
+            // Add mouse event handlers for camera rotation
+            addMouseControls();
+
+            // Add event handlers for control buttons
+            addControlButtons();
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        // Function to create the car
+        function createCar() {
+            // Create a group for the entire car for easy movement
+            car = new THREE.Group();
+            scene.add(car);
+
+            // Material for the car body (bright 80s style)
+            const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff00ff, flatShading: true }); // Bright pink, flat shading
+            // Material for the wheels
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, flatShading: true }); // Dark grey
+
+            // Main car body (low-poly cube)
+            const mainBodyGeometry = new THREE.BoxGeometry(3, 1, 5); // Width, height, length
+            const mainBody = new THREE.Mesh(mainBodyGeometry, bodyMaterial);
+            mainBody.position.y = 0.5; // Lift above ground
+            car.add(mainBody);
+
+            // Cabin/roof (smaller cube, offset back and up)
+            const cabinGeometry = new THREE.BoxGeometry(2.5, 0.8, 2.5);
+            const cabin = new THREE.Mesh(cabinGeometry, bodyMaterial);
+            cabin.position.set(0, 1.3, -0.5); // Position cabin relative to main body
+            car.add(cabin);
+
+            // Wheels (low-poly cylinders)
+            // CylinderGeometry parameters: radiusTop, radiusBottom, height, radialSegments
+            const wheelGeometry = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 8); // Radius 0.7, thickness 0.5, 8 segments for low-poly look
+            wheelGeometry.rotateX(Math.PI / 2); // Rotate cylinder to be horizontal (like a wheel)
+
+            const wheelPositions = [
+                { x: -1.6, y: 0.2, z: 1.8 }, // Front left
+                { x: 1.6, y: 0.2, z: 1.8 },  // Front right
+                { x: -1.6, y: 0.2, z: -1.8 }, // Rear left
+                { x: 1.6, y: 0.2, z: -1.8 }   // Rear right
+            ];
+
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                wheel.position.set(pos.x, pos.y, pos.z);
+                car.add(wheel); // Add wheels to the car group
+            });
+
+            // Center the entire car group on Y so it's level with the road
+            car.position.y = 0.1; // Slightly lift so wheels don't clip through
+        }
+
+        // Function to create the road
+        function createRoad() {
+            const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, flatShading: true }); // Dark grey road color
+            const roadGeometry = new THREE.BoxGeometry(10, 0.1, 200); // Increase road length for scrolling
+            road = new THREE.Mesh(roadGeometry, roadMaterial);
+            road.position.y = -0.1; // Road slightly below car
+            road.position.z = -100; // Offset road back so car is at the start
+            scene.add(road);
+
+            // Add road markings (simple white stripes)
+            const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const stripeGeometry = new THREE.BoxGeometry(0.2, 0.11, 2); // Thin stripes
+            for (let i = -90; i < 90; i += 5) { // Place stripes along the road length
+                const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
+                stripe.position.set(0, 0, i);
+                road.add(stripe); // Add stripes to the road
+            }
+        }
+
+        // Function to create neon lines on the sides of the road
+        function createNeonLines() {
+            const neonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 1.5 }); // Bright turquoise, glowing
+            const neonGeometry = new THREE.BoxGeometry(0.2, 0.2, 200); // Increase neon line length
+
+            leftNeon = new THREE.Mesh(neonGeometry, neonMaterial);
+            leftNeon.position.set(-4.5, 0, -100); // Left of the road
+            scene.add(leftNeon);
+
+            rightNeon = new THREE.Mesh(neonGeometry, neonMaterial);
+            rightNeon.position.set(4.5, 0, -100); // Right of the road
+            scene.add(rightNeon);
+        }
+
+        // Mouse event handlers for camera rotation
+        function addMouseControls() {
+            renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+            renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+            renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+        }
+
+        function onMouseDown(event) {
+            isDragging = true;
+            previousMousePosition.x = event.clientX;
+            previousMousePosition.y = event.clientY;
+        }
+
+        function onMouseUp(event) {
+            isDragging = false;
+        }
+
+        function onMouseMove(event) {
+            if (!isDragging) return;
+
+            const deltaX = event.clientX - previousMousePosition.x;
+            const deltaY = event.clientY - previousMousePosition.y;
+
+            // Rotate camera around the car
+            const rotationSpeed = 0.005;
+            const distance = camera.position.distanceTo(car.position); // Distance from camera to car
+
+            camera.position.x -= deltaX * rotationSpeed * distance;
+            camera.position.y += deltaY * rotationSpeed * distance;
+
+            // Limit Y rotation to prevent camera from flipping
+            camera.position.y = Math.max(1, Math.min(20, camera.position.y));
+
+            camera.lookAt(car.position); // Camera always looks at the car
+            previousMousePosition.x = event.clientX;
+            previousMousePosition.y = event.clientY;
+        }
+
+        // Add event handlers for control buttons
+        function addControlButtons() {
+            const forwardButton = document.getElementById('forwardButton');
+            const backwardButton = document.getElementById('backwardButton');
+
+            // "Forward" button behavior
+            forwardButton.addEventListener('mousedown', () => {
+                isForwardPressed = true;
+            });
+            forwardButton.addEventListener('mouseup', () => {
+                isForwardPressed = false;
+            });
+            // For mobile devices
+            forwardButton.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // Prevent default touch behavior (e.g., scrolling)
+                isForwardPressed = true;
+            });
+            forwardButton.addEventListener('touchend', () => {
+                isForwardPressed = false;
+            });
+
+
+            // "Backward" button behavior
+            backwardButton.addEventListener('mousedown', () => {
+                isBackwardPressed = true;
+            });
+            backwardButton.addEventListener('mouseup', () => {
+                isBackwardPressed = false;
+            });
+            // For mobile devices
+            backwardButton.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                isBackwardPressed = true;
+            });
+            backwardButton.addEventListener('touchend', () => {
+                isBackwardPressed = false;
+            });
+        }
+
+
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / (window.innerHeight - 80); // Account for button height
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight - 80);
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate); // Request next frame
+
+            // Apply acceleration if forward button is pressed
+            if (isForwardPressed) {
+                carSpeed = Math.min(maxSpeed, carSpeed + acceleration);
+            }
+            // Apply acceleration if backward button is pressed
+            else if (isBackwardPressed) {
+                carSpeed = Math.max(maxReverseSpeed, carSpeed - acceleration);
+            }
+            // Apply deceleration if no button is pressed
+            else {
+                if (carSpeed > 0) {
+                    carSpeed = Math.max(0, carSpeed - deceleration);
+                } else if (carSpeed < 0) {
+                    carSpeed = Math.min(0, carSpeed + deceleration);
+                }
+            }
+
+            // Move road and neon lines
+            road.position.z += carSpeed;
+            leftNeon.position.z += carSpeed;
+            rightNeon.position.z += carSpeed;
+
+            // Infinite road scrolling
+            if (road.position.z > 50) { // If road has gone too far
+                road.position.z -= 100; // Move it back
+            } else if (road.position.z < -150) { // If road has gone too far back
+                road.position.z += 100; // Move it forward
+            }
+
+            // Infinite neon lines scrolling
+            if (leftNeon.position.z > 50) {
+                leftNeon.position.z -= 100;
+            } else if (leftNeon.position.z < -150) {
+                leftNeon.position.z += 100;
+            }
+            if (rightNeon.position.z > 50) {
+                rightNeon.position.z -= 100;
+            } else if (rightNeon.position.z < -150) {
+                rightNeon.position.z += 100;
+            }
+
+            // Update speedometer
+            const currentSpeedKmh = Math.abs(carSpeed * speedConversionFactor).toFixed(0); // Absolute value, rounded to integer
+            document.getElementById('speedDisplay').textContent = currentSpeedKmh;
+
+            // Camera always looks at the car
+            camera.lookAt(car.position);
+
+            renderer.render(scene, camera); // Render the scene
+        }
+
+        // Start initialization and animation after window loads
+        window.onload = function() {
+            init();
+            animate();
+        };
+    </script>
+</body>
+</html>
