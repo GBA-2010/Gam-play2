@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ретро-Ралли 80-х: Низкополигональная 3D-сцена</title>
+    <title>Ретро-Ралли 80-х: Гонки с трафиком и поворотами</title>
     <style>
         /* Основные стили для страницы */
         body {
@@ -107,13 +107,15 @@
 <body>
     <!-- Инструкции для пользователя -->
     <div class="instructions">
-        Используйте мышь, чтобы вращать камеру. Нажимайте и удерживайте кнопки "Вперёд" и "Назад" для движения.
+        Используйте мышь, чтобы вращать камеру. Нажимайте и удерживайте кнопки "Вперёд", "Назад", "Влево", "Вправо" для движения.
     </div>
 
     <!-- Контейнер для кнопок управления -->
     <div class="controls">
+        <button id="leftButton" class="control-button">Влево</button>
         <button id="forwardButton" class="control-button">Вперёд</button>
         <button id="backwardButton" class="control-button">Назад</button>
+        <button id="rightButton" class="control-button">Вправо</button>
     </div>
 
     <!-- Блок спидометра -->
@@ -131,141 +133,186 @@
             y: 0
         };
 
-        // Variables for car movement control
+        // Переменные для управления движением автомобиля
         let carSpeed = 0;
-        const acceleration = 0.05; // Acceleration rate
-        const deceleration = 0.03; // Deceleration rate when no button is pressed
-        const maxSpeed = 1.5; // Maximum forward speed
-        const maxReverseSpeed = -0.5; // Maximum reverse speed
-        const speedConversionFactor = 100; // 1 unit of carSpeed = 100 km/h
+        const acceleration = 0.05; // Скорость ускорения
+        const deceleration = 0.03; // Скорость замедления при отпускании кнопок
+        const maxSpeed = 1.5; // Максимальная скорость вперед
+        const maxReverseSpeed = -0.5; // Максимальная скорость назад
+        const speedConversionFactor = 100; // Коэффициент для перевода скорости в км/ч
 
-        // Flags to check if buttons are pressed
+        // Флаги для проверки нажатия кнопок
         let isForwardPressed = false;
         let isBackwardPressed = false;
+        let isLeftPressed = false;
+        let isRightPressed = false;
 
-        // Scene initialization
+        // Переменные для поворота
+        const turnRate = 0.03; // Скорость поворота
+        const maxTurnAngle = Math.PI / 4; // Максимальный угол поворота (45 градусов в радианах)
+        const lateralMoveSpeed = 0.1; // Скорость бокового перемещения при повороте
+        const roadWidthLimit = 4.0; // Предел по X-координате для машины на дороге
+
+        // Массив для хранения встречных машин
+        const trafficCars = [];
+        const trafficSpeed = 0.8; // Скорость встречных машин
+        let lastTrafficSpawnTime = 0;
+        const trafficSpawnInterval = 2000; // Интервал появления встречных машин (мс)
+
+        // Инициализация сцены
         function init() {
-            // Create scene
+            try {
+                renderer = new THREE.WebGLRenderer({ antialias: true }); // Включаем сглаживание
+                renderer.setSize(window.innerWidth, window.innerHeight - 80); // Устанавливаем размер рендерера
+                document.body.insertBefore(renderer.domElement, document.querySelector('.controls')); // Добавляем холст перед кнопками
+                console.log('WebGLRenderer успешно инициализирован.');
+            } catch (e) {
+                console.error("Ошибка при создании контекста WebGL:", e);
+                document.body.innerHTML = '<div style="color: red; text-align: center; margin-top: 50px;">Не удалось инициализировать WebGL. Ваш браузер или устройство могут не поддерживать его.</div>';
+                return; // Прекращаем инициализацию, если WebGL не работает
+            }
+
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x1a1a2e); // Dark blue space/night background
+            scene.background = new THREE.Color(0x1a1a2e); // Темно-синий фон
 
-            // Create camera (perspective camera)
-            // Parameters: field of view, aspect ratio, near clipping plane, far clipping plane
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / (window.innerHeight - 80), 0.1, 1000); // Height considering buttons
-            camera.position.set(0, 5, 15); // Camera position
-            camera.lookAt(new THREE.Vector3(0, 0, 0)); // Camera looks at the center
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / (window.innerHeight - 80), 0.1, 1000);
+            camera.position.set(0, 5, 15);
+            camera.lookAt(new THREE.Vector3(0, 0, 0));
 
-            // Create renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true }); // Enable anti-aliasing
-            renderer.setSize(window.innerWidth, window.innerHeight - 80); // Set renderer size
-            document.body.insertBefore(renderer.domElement, document.querySelector('.controls')); // Add canvas before buttons
-
-            // Add lights
-            const ambientLight = new THREE.AmbientLight(0x404040); // Soft ambient light
+            const ambientLight = new THREE.AmbientLight(0x404040);
             scene.add(ambientLight);
 
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Directional light
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
             directionalLight.position.set(5, 10, 7);
             scene.add(directionalLight);
 
-            // Create low-poly car
             createCar();
-
-            // Create low-poly road
             createRoad();
-
-            // Create neon lines on the sides of the road
             createNeonLines();
 
-            // Add mouse event handlers for camera rotation
             addMouseControls();
+            addControlButtons(); // Добавлены новые кнопки
+            addKeyboardControls(); // Добавлены элементы управления с клавиатуры для удобства
 
-            // Add event handlers for control buttons
-            addControlButtons();
-
-            // Handle window resize
             window.addEventListener('resize', onWindowResize, false);
+
+            animate(); // Запускаем анимационный цикл
         }
 
-        // Function to create the car
+        // Функция для создания автомобиля
         function createCar() {
-            // Create a group for the entire car for easy movement
             car = new THREE.Group();
             scene.add(car);
 
-            // Material for the car body (bright 80s style)
-            const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff00ff, flatShading: true }); // Bright pink, flat shading
-            // Material for the wheels
-            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, flatShading: true }); // Dark grey
+            const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff00ff, flatShading: true });
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, flatShading: true });
 
-            // Main car body (low-poly cube)
-            const mainBodyGeometry = new THREE.BoxGeometry(3, 1, 5); // Width, height, length
+            const mainBodyGeometry = new THREE.BoxGeometry(3, 1, 5);
             const mainBody = new THREE.Mesh(mainBodyGeometry, bodyMaterial);
-            mainBody.position.y = 0.5; // Lift above ground
+            mainBody.position.y = 0.5;
             car.add(mainBody);
 
-            // Cabin/roof (smaller cube, offset back and up)
             const cabinGeometry = new THREE.BoxGeometry(2.5, 0.8, 2.5);
             const cabin = new THREE.Mesh(cabinGeometry, bodyMaterial);
-            cabin.position.set(0, 1.3, -0.5); // Position cabin relative to main body
+            cabin.position.set(0, 1.3, -0.5);
             car.add(cabin);
 
-            // Wheels (low-poly cylinders)
-            // CylinderGeometry parameters: radiusTop, radiusBottom, height, radialSegments
-            const wheelGeometry = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 8); // Radius 0.7, thickness 0.5, 8 segments for low-poly look
-            wheelGeometry.rotateX(Math.PI / 2); // Rotate cylinder to be horizontal (like a wheel)
+            const wheelGeometry = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 8);
+            wheelGeometry.rotateX(Math.PI / 2);
 
             const wheelPositions = [
-                { x: -1.6, y: 0.2, z: 1.8 }, // Front left
-                { x: 1.6, y: 0.2, z: 1.8 },  // Front right
-                { x: -1.6, y: 0.2, z: -1.8 }, // Rear left
-                { x: 1.6, y: 0.2, z: -1.8 }   // Rear right
+                { x: -1.6, y: 0.2, z: 1.8 },
+                { x: 1.6, y: 0.2, z: 1.8 },
+                { x: -1.6, y: 0.2, z: -1.8 },
+                { x: 1.6, y: 0.2, z: -1.8 }
             ];
 
             wheelPositions.forEach(pos => {
                 const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
                 wheel.position.set(pos.x, pos.y, pos.z);
-                car.add(wheel); // Add wheels to the car group
+                car.add(wheel);
             });
 
-            // Center the entire car group on Y so it's level with the road
-            car.position.y = 0.1; // Slightly lift so wheels don't clip through
+            car.position.y = 0.1;
         }
 
-        // Function to create the road
+        // Функция для создания встречной машины
+        function createTrafficCar() {
+            const trafficCar = new THREE.Group();
+            const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00]; // Разные цвета для трафика
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            const trafficBodyMaterial = new THREE.MeshStandardMaterial({ color: randomColor, flatShading: true });
+            const trafficWheelMaterial = new THREE.MeshStandardMaterial({ color: 0x111111, flatShading: true });
+
+            const bodyGeometry = new THREE.BoxGeometry(2.5, 1, 4); // Чуть меньше, чем машина игрока
+            const body = new THREE.Mesh(bodyGeometry, trafficBodyMaterial);
+            body.position.y = 0.5;
+            trafficCar.add(body);
+
+            const cabinGeometry = new THREE.BoxGeometry(2, 0.7, 2);
+            const cabin = new THREE.Mesh(cabinGeometry, trafficBodyMaterial);
+            cabin.position.set(0, 1.2, -0.5);
+            trafficCar.add(cabin);
+
+            const wheelGeometry = new THREE.CylinderGeometry(0.6, 0.6, 0.4, 8);
+            wheelGeometry.rotateX(Math.PI / 2);
+
+            const wheelPositions = [
+                { x: -1.2, y: 0.2, z: 1.5 },
+                { x: 1.2, y: 0.2, z: 1.5 },
+                { x: -1.2, y: 0.2, z: -1.5 },
+                { x: 1.2, y: 0.2, z: -1.5 }
+            ];
+
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeometry, trafficWheelMaterial);
+                wheel.position.set(pos.x, pos.y, pos.z);
+                trafficCar.add(wheel);
+            });
+
+            // Случайная позиция по X на дороге
+            trafficCar.position.x = (Math.random() * roadWidthLimit * 2) - roadWidthLimit;
+            trafficCar.position.y = 0.1;
+            trafficCar.position.z = -150 - Math.random() * 50; // Появляется далеко впереди
+
+            scene.add(trafficCar);
+            trafficCars.push(trafficCar);
+        }
+
+
+        // Функция для создания дороги
         function createRoad() {
-            const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, flatShading: true }); // Dark grey road color
-            const roadGeometry = new THREE.BoxGeometry(10, 0.1, 200); // Increase road length for scrolling
+            const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, flatShading: true });
+            const roadGeometry = new THREE.BoxGeometry(10, 0.1, 200);
             road = new THREE.Mesh(roadGeometry, roadMaterial);
-            road.position.y = -0.1; // Road slightly below car
-            road.position.z = -100; // Offset road back so car is at the start
+            road.position.y = -0.1;
+            road.position.z = -100;
             scene.add(road);
 
-            // Add road markings (simple white stripes)
             const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-            const stripeGeometry = new THREE.BoxGeometry(0.2, 0.11, 2); // Thin stripes
-            for (let i = -90; i < 90; i += 5) { // Place stripes along the road length
+            const stripeGeometry = new THREE.BoxGeometry(0.2, 0.11, 2);
+            for (let i = -90; i < 90; i += 5) {
                 const stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
                 stripe.position.set(0, 0, i);
-                road.add(stripe); // Add stripes to the road
+                road.add(stripe);
             }
         }
 
-        // Function to create neon lines on the sides of the road
+        // Функция для создания неоновых линий по бокам дороги
         function createNeonLines() {
-            const neonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 1.5 }); // Bright turquoise, glowing
-            const neonGeometry = new THREE.BoxGeometry(0.2, 0.2, 200); // Increase neon line length
+            const neonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 1.5 });
+            const neonGeometry = new THREE.BoxGeometry(0.2, 0.2, 200);
 
             leftNeon = new THREE.Mesh(neonGeometry, neonMaterial);
-            leftNeon.position.set(-4.5, 0, -100); // Left of the road
+            leftNeon.position.set(-4.5, 0, -100);
             scene.add(leftNeon);
 
             rightNeon = new THREE.Mesh(neonGeometry, neonMaterial);
-            rightNeon.position.set(4.5, 0, -100); // Right of the road
+            rightNeon.position.set(4.5, 0, -100);
             scene.add(rightNeon);
         }
 
-        // Mouse event handlers for camera rotation
+        // Обработчики событий мыши для вращения камеры
         function addMouseControls() {
             renderer.domElement.addEventListener('mousedown', onMouseDown, false);
             renderer.domElement.addEventListener('mouseup', onMouseUp, false);
@@ -288,82 +335,110 @@
             const deltaX = event.clientX - previousMousePosition.x;
             const deltaY = event.clientY - previousMousePosition.y;
 
-            // Rotate camera around the car
             const rotationSpeed = 0.005;
-            const distance = camera.position.distanceTo(car.position); // Distance from camera to car
+            const distance = camera.position.distanceTo(car.position);
 
             camera.position.x -= deltaX * rotationSpeed * distance;
             camera.position.y += deltaY * rotationSpeed * distance;
 
-            // Limit Y rotation to prevent camera from flipping
             camera.position.y = Math.max(1, Math.min(20, camera.position.y));
 
-            camera.lookAt(car.position); // Camera always looks at the car
+            camera.lookAt(car.position);
             previousMousePosition.x = event.clientX;
             previousMousePosition.y = event.clientY;
         }
 
-        // Add event handlers for control buttons
+        // Добавление обработчиков событий для кнопок управления (на экране)
         function addControlButtons() {
             const forwardButton = document.getElementById('forwardButton');
             const backwardButton = document.getElementById('backwardButton');
+            const leftButton = document.getElementById('leftButton');
+            const rightButton = document.getElementById('rightButton');
 
-            // "Forward" button behavior
-            forwardButton.addEventListener('mousedown', () => {
-                isForwardPressed = true;
-            });
-            forwardButton.addEventListener('mouseup', () => {
-                isForwardPressed = false;
-            });
-            // For mobile devices
-            forwardButton.addEventListener('touchstart', (e) => {
-                e.preventDefault(); // Prevent default touch behavior (e.g., scrolling)
-                isForwardPressed = true;
-            });
-            forwardButton.addEventListener('touchend', () => {
-                isForwardPressed = false;
+            forwardButton.addEventListener('mousedown', () => { isForwardPressed = true; });
+            forwardButton.addEventListener('mouseup', () => { isForwardPressed = false; });
+            forwardButton.addEventListener('touchstart', (e) => { e.preventDefault(); isForwardPressed = true; });
+            forwardButton.addEventListener('touchend', () => { isForwardPressed = false; });
+
+            backwardButton.addEventListener('mousedown', () => { isBackwardPressed = true; });
+            backwardButton.addEventListener('mouseup', () => { isBackwardPressed = false; });
+            backwardButton.addEventListener('touchstart', (e) => { e.preventDefault(); isBackwardPressed = true; });
+            backwardButton.addEventListener('touchend', () => { isBackwardPressed = false; });
+
+            leftButton.addEventListener('mousedown', () => { isLeftPressed = true; });
+            leftButton.addEventListener('mouseup', () => { isLeftPressed = false; });
+            leftButton.addEventListener('touchstart', (e) => { e.preventDefault(); isLeftPressed = true; });
+            leftButton.addEventListener('touchend', () => { isLeftPressed = false; });
+
+            rightButton.addEventListener('mousedown', () => { isRightPressed = true; });
+            rightButton.addEventListener('mouseup', () => { isRightPressed = false; });
+            rightButton.addEventListener('touchstart', (e) => { e.preventDefault(); isRightPressed = true; });
+            rightButton.addEventListener('touchend', () => { isRightPressed = false; });
+        }
+
+        // Добавление обработчиков событий для клавиатуры (для удобства тестирования)
+        function addKeyboardControls() {
+            document.addEventListener('keydown', (event) => {
+                switch (event.key) {
+                    case 'ArrowUp':
+                    case 'w':
+                        isForwardPressed = true;
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                        isBackwardPressed = true;
+                        break;
+                    case 'ArrowLeft':
+                    case 'a':
+                        isLeftPressed = true;
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                        isRightPressed = true;
+                        break;
+                }
             });
 
-
-            // "Backward" button behavior
-            backwardButton.addEventListener('mousedown', () => {
-                isBackwardPressed = true;
-            });
-            backwardButton.addEventListener('mouseup', () => {
-                isBackwardPressed = false;
-            });
-            // For mobile devices
-            backwardButton.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                isBackwardPressed = true;
-            });
-            backwardButton.addEventListener('touchend', () => {
-                isBackwardPressed = false;
+            document.addEventListener('keyup', (event) => {
+                switch (event.key) {
+                    case 'ArrowUp':
+                    case 'w':
+                        isForwardPressed = false;
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                        isBackwardPressed = false;
+                        break;
+                    case 'ArrowLeft':
+                    case 'a':
+                        isLeftPressed = false;
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                        isRightPressed = false;
+                        break;
+                }
             });
         }
 
 
-        // Handle window resize
+        // Обработка изменения размера окна
         function onWindowResize() {
-            camera.aspect = window.innerWidth / (window.innerHeight - 80); // Account for button height
+            camera.aspect = window.innerWidth / (window.innerHeight - 80);
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight - 80);
         }
 
-        // Animation loop
+        // Анимационный цикл
         function animate() {
-            requestAnimationFrame(animate); // Request next frame
+            requestAnimationFrame(animate);
 
-            // Apply acceleration if forward button is pressed
+            // Применение ускорения/замедления
             if (isForwardPressed) {
                 carSpeed = Math.min(maxSpeed, carSpeed + acceleration);
-            }
-            // Apply acceleration if backward button is pressed
-            else if (isBackwardPressed) {
+            } else if (isBackwardPressed) {
                 carSpeed = Math.max(maxReverseSpeed, carSpeed - acceleration);
-            }
-            // Apply deceleration if no button is pressed
-            else {
+            } else {
                 if (carSpeed > 0) {
                     carSpeed = Math.max(0, carSpeed - deceleration);
                 } else if (carSpeed < 0) {
@@ -371,45 +446,87 @@
                 }
             }
 
-            // Move road and neon lines
-            road.position.z += carSpeed;
-            leftNeon.position.z += carSpeed;
-            rightNeon.position.z += carSpeed;
-
-            // Infinite road scrolling
-            if (road.position.z > 50) { // If road has gone too far
-                road.position.z -= 100; // Move it back
-            } else if (road.position.z < -150) { // If road has gone too far back
-                road.position.z += 100; // Move it forward
+            // Логика поворота автомобиля
+            if (isLeftPressed) {
+                car.rotation.y = Math.min(maxTurnAngle, car.rotation.y + turnRate);
+                car.position.x = Math.max(-roadWidthLimit, car.position.x - lateralMoveSpeed);
+            } else if (isRightPressed) {
+                car.rotation.y = Math.max(-maxTurnAngle, car.rotation.y - turnRate);
+                car.position.x = Math.min(roadWidthLimit, car.position.x + lateralMoveSpeed);
+            } else {
+                // Возвращение в прямое положение
+                if (car.rotation.y > 0.01) {
+                    car.rotation.y = Math.max(0, car.rotation.y - turnRate);
+                } else if (car.rotation.y < -0.01) {
+                    car.rotation.y = Math.min(0, car.rotation.y + turnRate);
+                } else {
+                    car.rotation.y = 0; // Сбрасываем до 0, если очень близко
+                }
             }
 
-            // Infinite neon lines scrolling
-            if (leftNeon.position.z > 50) {
-                leftNeon.position.z -= 100;
-            } else if (leftNeon.position.z < -150) {
-                leftNeon.position.z += 100;
+            // Движение дороги и неоновых линий
+            if (road && leftNeon && rightNeon && car) {
+                road.position.z += carSpeed;
+                leftNeon.position.z += carSpeed;
+                rightNeon.position.z += carSpeed;
+
+                // Бесконечная прокрутка дороги
+                if (road.position.z > 50) {
+                    road.position.z -= 100;
+                } else if (road.position.z < -150) {
+                    road.position.z += 100;
+                }
+
+                // Бесконечная прокрутка неоновых линий
+                if (leftNeon.position.z > 50) {
+                    leftNeon.position.z -= 100;
+                } else if (leftNeon.position.z < -150) {
+                    leftNeon.position.z += 100;
+                }
+                if (rightNeon.position.z > 50) {
+                    rightNeon.position.z -= 100;
+                } else if (rightNeon.position.z < -150) {
+                    rightNeon.position.z += 100;
+                }
+
+                // Движение встречных машин
+                const carsToRemove = [];
+                trafficCars.forEach(trafficCar => {
+                    trafficCar.position.z += carSpeed - trafficSpeed; // Движение относительно игрока
+                    if (trafficCar.position.z > camera.position.z + 20) { // Если машина позади камеры
+                        carsToRemove.push(trafficCar);
+                    }
+                });
+
+                // Удаление машин, которые вышли за пределы видимости
+                carsToRemove.forEach(trafficCar => {
+                    scene.remove(trafficCar);
+                    trafficCars.splice(trafficCars.indexOf(trafficCar), 1);
+                });
+
+                // Появление новых машин
+                if (Date.now() - lastTrafficSpawnTime > trafficSpawnInterval && trafficCars.length < 5) { // Ограничиваем количество машин
+                    createTrafficCar();
+                    lastTrafficSpawnTime = Date.now();
+                }
+
+
+                // Обновление спидометра
+                const currentSpeedKmh = Math.abs(carSpeed * speedConversionFactor).toFixed(0);
+                document.getElementById('speedDisplay').textContent = currentSpeedKmh;
+
+                // Камера всегда смотрит на автомобиль и следует за ним по X
+                camera.position.x = car.position.x;
+                camera.lookAt(car.position);
+
+                renderer.render(scene, camera);
+            } else {
+                console.warn("Объекты Three.js не инициализированы. Пропуск кадра анимации.");
             }
-            if (rightNeon.position.z > 50) {
-                rightNeon.position.z -= 100;
-            } else if (rightNeon.position.z < -150) {
-                rightNeon.position.z += 100;
-            }
-
-            // Update speedometer
-            const currentSpeedKmh = Math.abs(carSpeed * speedConversionFactor).toFixed(0); // Absolute value, rounded to integer
-            document.getElementById('speedDisplay').textContent = currentSpeedKmh;
-
-            // Camera always looks at the car
-            camera.lookAt(car.position);
-
-            renderer.render(scene, camera); // Render the scene
         }
 
-        // Start initialization and animation after window loads
-        window.onload = function() {
-            init();
-            animate();
-        };
+        // Запускаем инициализацию и анимацию после загрузки окна
+        window.onload = init;
     </script>
 </body>
 </html>
